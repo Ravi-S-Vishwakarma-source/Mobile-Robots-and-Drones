@@ -16,7 +16,7 @@ This project focuses on the design and simulation of a navigation system for a T
 - Simulation using MATLAB Robotics Toolbox
 
 # Tools & Technologies:
-- MATLAB R2023+
+- MATLAB R2024a+
 - Robotics System Toolbox
 - TurtleBot Simulation Model
 - Sensor Simulation (Lidar, Ultrasonic, RGBD)
