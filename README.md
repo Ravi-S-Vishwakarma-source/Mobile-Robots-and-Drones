@@ -1,5 +1,7 @@
-# Search and Rescue TurtleBot – Navigation System Design & Simulation (MATLAB)
-This project focuses on the design and simulation of a navigation system for a TurtleBot mobile robot applied in search and rescue operations within disaster-stricken areas. The goal is to enable the robot to autonomously navigate from point A to point B while effectively avoiding obstacles and responding to environmental challenges using MATLAB.
+# Project 1: 
+  # Search and Rescue TurtleBot – Navigation System Design & Simulation (MATLAB)
+  This project focuses on designing and simulating a navigation system for a TurtleBot mobile robot applied in search and rescue operations within disaster-stricken areas. The goal is to enable the robot to 
+  autonomously navigate from point A to point B while avoiding obstacles and responding to environmental challenges using MATLAB.
 
 # Project Objectives:
 - Simulate a realistic search and rescue scenario using MATLAB and a TurtleBot model.
