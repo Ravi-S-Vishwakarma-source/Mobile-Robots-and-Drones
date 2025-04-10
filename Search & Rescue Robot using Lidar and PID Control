@@ -1,0 +1,277 @@
+Student Name: Ravi Shankar Vishwakarma
+Project Name: Search & Rescue Robot using Lidar and PID Control
+
+clc;                        % Clear command window
+clear;                      % Clear all workspace variables
+
+%% STEP 1: Structured Maze Environment
+mapWidth = 50;              % Set map width in grid units
+mapHeight = 40;             % Set map height in grid units
+mapRes = 1;                 % Set map resolution (cells per meter)
+map = binaryOccupancyMap(mapWidth, mapHeight, mapRes); % Create binary occupancy map
+
+% Function to draw walls by setting occupancy grid cells to 1
+drawWall = @(x, y, w, h) setOccupancy(map, ...
+    [reshape(repmat(x:x+w-1, h, 1), [], 1), ... % X coordinates
+     repmat((y:y+h-1)', w, 1)], 1, 'grid');     % Y coordinates
+
+% Draw outer walls (bounding box)
+drawWall(1, 1, mapWidth, 1);                    % Bottom wall
+drawWall(1, mapHeight, mapWidth, 1);           % Top wall
+drawWall(1, 1, 1, mapHeight);                  % Left wall
+drawWall(mapWidth, 1, 1, mapHeight);           % Right wall
+
+% Draw internal maze walls
+drawWall(10, 5, 1, 15);                        % Vertical wall
+drawWall(20, 10, 1, 20);                       % Vertical wall
+drawWall(30, 1, 1, 10);                        % Vertical wall
+drawWall(40, 10, 1, 25);                       % Vertical wall
+drawWall(5, 15, 15, 1);                        % Horizontal wall
+drawWall(5, 25, 15, 1);                        % Horizontal wall
+drawWall(25, 20, 15, 1);                       % Horizontal wall
+drawWall(25, 30, 15, 1);                       % Horizontal wall
+drawWall(18, 34, 4, 2);                        % Block wall
+drawWall(32, 5, 3, 3);                         % Block wall
+
+% Clear specific cells to open up paths
+setOccupancy(map, [10, 12; 20, 25; 30, 8; 40, 30], 0, 'grid');
+
+% Store map as the final world map
+worldMap = map;
+
+%% STEP 2: Display Map
+figure('Name','Search & Rescue Robot Simulation','NumberTitle','off', 'Position', [50 50 1600 600]); % Create a figure window
+worldAx = subplot(1,2,1);                  % Create left subplot for world map
+show(worldMap,'Parent',worldAx);          % Display the world map
+title('Maze Environment');                % Set title
+hold on;                                  % Keep plotting on same axes
+
+%% STEP 3: Sensor & Robot Setup
+lidar = rangeSensor;                      % Create a range (lidar) sensor object
+lidar.Range = [0 12];                     % Set lidar range (0 to 12 meters)
+lidar.HorizontalAngle = [-pi/2, pi/2];    % Set horizontal field of view (180 degrees)
+lidar.RangeNoise = 0;                     % No noise in readings
+
+pos = [3 3 0];                            % Set initial robot pose: [x, y, theta]
+[ranges, angles] = lidar(pos, worldMap); % Get initial lidar scan readings
+
+[hSensorData] = plotLidar(worldAx, pos, ranges, angles);  % Plot lidar rays
+[hRobot] = plotRobot(worldAx, pos);      % Plot the robot as a circle
+
+%% STEP 4: Ego-Centric Map
+egoMap = occupancyMap(mapWidth, mapHeight, worldMap.Resolution);  % Create empty ego-centric map
+localAx = subplot(1,2,2);                 % Create right subplot for ego map
+show(egoMap,'Parent',localAx);           % Show ego-centric map
+axis(localAx, [0 mapWidth 0 mapHeight]); % Set axis limits
+axis(localAx, 'equal');                  % Equal scaling for X and Y
+title('Ego-Centric Map');                % Set title
+hold on;                                  % Keep plotting on same axes
+
+robotRadius = 0.5;                        % Define robot radius for display
+thetaCircle = linspace(0, 2*pi, 50);      % Create 50 points for a circle
+xCircle = robotRadius * cos(thetaCircle) + pos(1);  % X-coords of robot circle
+yCircle = robotRadius * sin(thetaCircle) + pos(2);  % Y-coords of robot circle
+localMapFig = plot(localAx, xCircle, yCircle, 'k-', 'LineWidth', 2); % Plot robot in ego map
+
+%% STEP 5: Path Planning
+binaryMap = binaryOccupancyMap(worldMap); % Clone world map for planning
+inflate(binaryMap, 0.1);                 % Inflate obstacles to create buffer
+
+stateSpace = stateSpaceDubins([0 mapWidth; 0 mapHeight; -pi pi]); % Define Dubins space
+stateSpace.MinTurningRadius = 0.5;       % Minimum turning radius
+
+validator = validatorOccupancyMap(stateSpace); % Define collision validator
+validator.Map = binaryMap;              % Assign map to validator
+validator.ValidationDistance = 0.1;     % Distance between validation checks
+
+planner = plannerRRTStar(stateSpace, validator); % Initialize RRT* planner
+planner.MaxConnectionDistance = 10;     % Max distance between nodes
+planner.MaxIterations = 20000;          % Number of planning iterations
+
+startPt = [3 3 0];                       % Define start pose
+goalPt  = [35 32 pi/2];                 % Define goal pose
+plot(worldAx, startPt(1), startPt(2), 'go', 'MarkerSize', 10, 'LineWidth', 2); % Plot start
+plot(worldAx, goalPt(1), goalPt(2), 'ro', 'MarkerSize', 10, 'LineWidth', 2);   % Plot goal
+
+rng(1);                                  % Set random seed for reproducibility
+path = plan(planner, startPt, goalPt);   % Plan a path from start to goal
+
+if isempty(path.States)                  % If path planning failed
+    error("Initial path planning failed."); % Display error
+end
+
+interpolate(path, size(path.States,1)*10); % Smooth path with interpolation
+pathLine = plot(worldAx, path.States(:,1), path.States(:,2), 'b-', 'LineWidth', 2); % Plot path
+
+%% STEP 6: Add Obstacles (Black Color)
+obstacles = {                             % Define extra obstacles (position, width, height)
+    [8 15], 2, 3;
+    [10 18], 3, 2;
+    [22 12], 2, 4;
+    [30 25], 3, 3;
+    [12 32], 4, 2
+};
+
+for i = 1:size(obstacles, 1)              % Loop through each obstacle
+    pos = obstacles{i,1};                 % Get position
+    width = obstacles{i,2};              % Get width
+    height = obstacles{i,3};             % Get height
+    [X, Y] = meshgrid(pos(1):pos(1)+width-1, pos(2):pos(2)+height-1); % Create grid
+    setOccupancy(worldMap, [X(:), Y(:)], 1); % Set as occupied in map
+    rectangle('Position', [pos, width, height], ... % Plot as black box
+              'FaceColor', 'k', 'EdgeColor', 'k', ...
+              'Parent', worldAx);
+end
+
+%% STEP 7: PID Controller Setup
+Kp = 1.5; Ki = 0.01; Kd = 0.3;            % Set PID parameters
+errSum = 0;                               % Integral term
+prevErr = 0;                              % Previous error for derivative
+
+robotCurrentPose = path.States(1,:);      % Start pose
+goalRadius = 0.5;                         % Tolerance to goal
+batteryLevel = 100;                       % Initialize battery level
+batteryDrainRate = 0.01;                  % Battery consumption rate
+obstacleDetected = false;                % Flag for obstacle
+robotPath = robotCurrentPose(1:2);        % Initialize path history
+
+%% STEP 8: Simulation Loop
+waypointIdx = 2;                          % Start from second waypoint
+while true                                % Run until goal or low battery
+    if batteryLevel < 50
+        v = 1.5;                          % Increase speed at low battery
+    else
+        v = 1.0;                          % Normal speed
+    end
+
+    if waypointIdx > size(path.States, 1)
+        break;                            % Stop if reached end of path
+    end
+
+    dx = path.States(waypointIdx,1) - robotCurrentPose(1); % X distance to waypoint
+    dy = path.States(waypointIdx,2) - robotCurrentPose(2); % Y distance to waypoint
+    desiredAngle = atan2(dy, dx);         % Angle to next point
+    err = wrapToPi(desiredAngle - robotCurrentPose(3)); % Angular error
+    errSum = errSum + err;                % Update integral
+    dErr = err - prevErr;                 % Derivative
+    omega = Kp * err + Ki * errSum + Kd * dErr; % PID output
+    prevErr = err;                        % Save current error
+
+    distToWaypoint = norm([dx dy]);       % Distance to waypoint
+    if distToWaypoint < 0.75 && waypointIdx < size(path.States,1)
+        waypointIdx = waypointIdx + 1;    % Move to next waypoint
+    end
+
+    dt = 0.1;                             % Time step
+    robotCurrentPose(1) = robotCurrentPose(1) + v * cos(robotCurrentPose(3)) * dt; % Update X
+    robotCurrentPose(2) = robotCurrentPose(2) + v * sin(robotCurrentPose(3)) * dt; % Update Y
+    robotCurrentPose(3) = robotCurrentPose(3) + omega * dt;                        % Update angle
+    robotPath = [robotPath; robotCurrentPose(1:2)]; % Add to path
+
+    [ranges, angles] = lidar(robotCurrentPose, worldMap); % Get lidar data
+    insertRay(egoMap, robotCurrentPose, ranges, angles, lidar.Range(2)); % Update ego map
+
+    show(egoMap, 'Parent', localAx, 'FastUpdate', 1); % Show ego map
+    xCircle = robotRadius * cos(thetaCircle) + robotCurrentPose(1); % Robot circle X
+    yCircle = robotRadius * sin(thetaCircle) + robotCurrentPose(2); % Robot circle Y
+    set(localMapFig, 'XData', xCircle, 'YData', yCircle); % Update robot circle
+    axis(localAx, [0 mapWidth 0 mapHeight]); axis(localAx, 'equal'); % Keep same view
+
+    [hRobot, hSensorData] = updateRobotAndLidar(hRobot, hSensorData, robotCurrentPose, ranges, angles, worldAx); % Update robot display
+
+    batteryStr = sprintf('Battery: %.1f%%', batteryLevel); % Battery display
+    set(gcf, 'Name', ['Search & Rescue Robot Simulation — ', batteryStr]); % Set figure title
+    drawnow limitrate;                    % Refresh screen
+
+    % Obstacle avoidance
+    safeDistance = 0.6;                   % Min safe range
+    frontIdx = find(abs(angles) < 0.3);   % Indices of front angles
+    if any(ranges(frontIdx) < safeDistance) && ~obstacleDetected
+        disp("Obstacle detected. Stopping and rotating to find clear direction...");
+        obstacleDetected = true;
+        clearPathFound = false;
+        angleOffset = deg2rad(30);       % Rotate in 30-degree steps
+        maxAttempts = 12;                % Try 12 times max
+        attempt = 0;
+
+        while ~clearPathFound && attempt < maxAttempts
+            attempt = attempt + 1;
+            pause(0.3);
+            robotCurrentPose(3) = robotCurrentPose(3) + angleOffset; % Rotate
+            [testRanges, testAngles] = lidar(robotCurrentPose, worldMap);
+            testFrontIdx = find(abs(testAngles) < 0.3);
+            if all(testRanges(testFrontIdx) > safeDistance)
+                clearPathFound = true;
+            end
+        end
+
+        % Replan path
+        if clearPathFound && all(isfinite(robotCurrentPose)) && isStateValid(validator, robotCurrentPose)
+            newPath = plan(planner, robotCurrentPose, goalPt);
+            if isempty(newPath.States), error("Replanning failed."); end
+            interpolate(newPath, size(newPath.States,1)*10);
+            delete(pathLine);
+            pathLine = plot(worldAx, newPath.States(:,1), newPath.States(:,2), 'g-', 'LineWidth', 2);
+            path = newPath;
+            waypointIdx = 2;
+        else
+            warning("No clear path found or current pose is invalid.");
+        end
+    end
+
+    % Stop if goal reached or battery too low
+    distToGoal = norm(robotCurrentPose(1:2) - goalPt(1:2));
+    if distToGoal < goalRadius, disp("Goal Reached."); break; end
+    batteryLevel = batteryLevel - batteryDrainRate;
+    if batteryLevel < 10, disp("Battery critically low. Returning to base."); break; end
+end
+
+%% Final Map with Trajectory
+figure;
+show(egoMap);                             % Show mapped area
+title('Final Mapped Environment');        % Title
+hold on;
+axis([0 mapWidth 0 mapHeight]); axis equal;
+plot(robotPath(:,1), robotPath(:,2), 'b-', 'LineWidth', 2); % Path trace
+plot(startPt(1), startPt(2), 'go', 'MarkerSize', 10, 'LineWidth', 2); % Start
+text(startPt(1)+0.5, startPt(2), 'Start', 'Color', 'green', 'FontWeight', 'bold');
+plot(goalPt(1), goalPt(2), 'ro', 'MarkerSize', 10, 'LineWidth', 2);   % Goal
+text(goalPt(1)+0.5, goalPt(2), 'Goal', 'Color', 'red', 'FontWeight', 'bold');
+
+%% Function: Plot Robot
+% This function plots the robot as a black circle on the given axes
+function h = plotRobot(ax, pose)
+    r = 0.5;                                  % Set the robot's radius
+    theta = linspace(0, 2*pi, 50);            % Generate 50 angle values from 0 to 2π for a full circle
+    x = r * cos(theta) + pose(1);             % X coordinates of the circle centered at robot's x-position
+    y = r * sin(theta) + pose(2);             % Y coordinates of the circle centered at robot's y-position
+    h = plot(ax, x, y, 'k-', 'LineWidth', 2); % Plot the circle on the given axes with a black border and line thickness
+end
+
+%% Function: Plot Lidar Beams
+% This function plots lidar beams from the robot's current pose.
+function h = plotLidar(ax, pose, ranges, angles)
+    h = gobjects(numel(ranges),1);             % Preallocate graphics object array to store plot handles
+    for i = 1:numel(ranges)                    % Loop through each lidar beam
+        angle = angles(i) + pose(3);           % Adjust beam angle based on robot orientation (heading)
+        
+        if ranges(i) < inf                     % Only plot valid range readings (non-infinite values)
+            xEnd = pose(1) + ranges(i)*cos(angle);  % Calculate end x-position of the beam
+            yEnd = pose(2) + ranges(i)*sin(angle);  % Calculate end y-position of the beam
+            
+            % Plot the beam as a 3D line at a small height (z = 0.3) for visibility
+            h(i) = plot3(ax, [pose(1) xEnd], [pose(2) yEnd], [0.3 0.3], ...
+                        'Color', [0.4 0.8 1]);       % Light blue color
+        end
+    end
+end
+
+
+%% Function: Update Robot and Lidar
+function [robotHandle, lidarHandles] = updateRobotAndLidar(robotHandle, lidarHandles, pose, ranges, angles, ax)
+    if isvalid(robotHandle), delete(robotHandle); end
+    delete(lidarHandles(ishandle(lidarHandles)));
+    hold(ax, 'on');
+    robotHandle = plotRobot(ax, pose);
+    lidarHandles = plotLidar(ax, pose, ranges, angles);
+end
